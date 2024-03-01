@@ -5,7 +5,7 @@ Most arguments are self-explanatory, except one - the num-processes  argument te
   
 `CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7 python master.py  
 --gen-model-name mistralai/Mistral-7B-Instruct-v0.1  
---fact-model-name kundank/evinspect-usb-flanul2-qlora4bit  
+--fact-model-name kundank/genaudit-usb-flanul2  
 --output-file ./xsum-mistral-topp_0.9-temp_1.0.jsonl  
 --base-port 8900 --num-processes 4 --gen-dosample  
 --gen-top-p 0.9 --gen-temperature 1.0 --dsname xsum  

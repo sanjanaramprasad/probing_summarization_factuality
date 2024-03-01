@@ -93,6 +93,8 @@ if __name__=="__main__":
     parser.add_argument("--gen-dosample", action="store_true")
     parser.add_argument("--gen-temperature", type=float, default=1.0)
     parser.add_argument("--gen-top-p", type=float, default=None)
+    parser.add_argument("--gen-num-gpus", type=int, default=1)
+    parser.add_argument("--gen-is-lora", action="store_true")
     parser.add_argument("--dsname", type=str, required=True)
     parser.add_argument("--do-truncate", action="store_true")
     parser.add_argument("--max-predict", type=int, default=99999999)
@@ -117,19 +119,28 @@ if __name__=="__main__":
     dsname = args.dsname
     do_truncate = args.do_truncate
     max_predict = args.max_predict
+    gen_num_gpus = args.gen_num_gpus
+    gen_is_lora = args.gen_is_lora
 
     set_start_method("spawn")
 
 
     generation_procs = []
+    factcheck_procs = []
+
+    gpu_counter = 0
+
     for pidx in range(num_processes):
-        p = Process(target=process_root_generation, args=(pidx, pidx, gen_model_name, base_port, gen_quantize, 9999999, max_decode_len))
+        p = Process(target=process_root_generation, args=(pidx, [gpu_counter+k for k in range(gen_num_gpus)], gen_model_name, base_port+2*pidx, gen_quantize, gen_is_lora, 9999999, max_decode_len))
         p.start()
         generation_procs.append(p)
 
-    factcheck_procs = []
-    for pidx in range(num_processes):
-        p = Process(target=process_root_factcheck, args=(pidx, pidx+num_processes, fact_model_name, base_port+num_processes, 99999999, 9999999))
+        gpu_counter+=gen_num_gpus
+
+        p = Process(target=process_root_factcheck, args=(pidx, gpu_counter, fact_model_name, base_port+2*pidx+1, 99999999, 9999999))
+
+        gpu_counter+=1
+
         p.start()
         factcheck_procs.append(p)
 

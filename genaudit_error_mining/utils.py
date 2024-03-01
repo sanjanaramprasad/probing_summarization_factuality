@@ -58,5 +58,46 @@ def get_data(dsname, do_truncate=False, maxlen=2000):
                 article_lines = truncate(article_lines, tok, maxlen)
             yield {"input_lines": article_lines, "id":sample_dp["id"]}
 
+    elif dsname=="reddit":
+        import nltk
+        reddit = load_dataset("reddit_tifu", "long")
+        reddit = reddit.shuffle(seed=1729)
+        train_set = [dict(x) for x in reddit["train"]]
+
+        # manually selected ids that do not contain profanity
+        chosen_ids = [3, 6, 8, 9, 12, 13, 14, 17, 18, 19,
+                        21, 23, 31, 34, 37, 38, 39, 41, 48, 83,
+                        50, 51, 54, 61, 72, 73, 76, 78, 79, 80]
+
+        for idx in chosen_ids:
+            sample_dp = train_set[idx]
+
+            article_lines = sample_dp["documents"].strip().split("\n")
+            temp = []
+            for sent in article_lines:
+                sent = sent.strip()
+                if not sent:
+                    continue
+                temp.extend(nltk.sent_tokenize(sent))
+            article_lines = temp
+
+            if do_truncate:
+                article_lines = truncate(article_lines, tok, maxlen)
+            yield {"input_lines": article_lines, "id":idx}
+
+    elif dsname=="samsum":
+        samsum = load_dataset("samsum")
+        test_set = [dict(x) for x in samsum["test"]]
+        for sample_dp in test_set:
+            article_lines = sample_dp["dialogue"].strip().split("\r\n")
+            if (len(article_lines)<10):
+                # ignore the conversations that are too short
+                continue
+            if do_truncate:
+                article_lines = truncate(article_lines, tok, maxlen)
+            yield {"input_lines": article_lines, "id":sample_dp["id"]}
+
+
+
     else:
         raise NotImplementedError

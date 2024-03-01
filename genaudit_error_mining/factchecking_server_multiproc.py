@@ -4,6 +4,7 @@ import json
 import multiprocessing
 import pdb
 from collections import defaultdict
+from copy import deepcopy
 
 import jsonlines
 import nltk
@@ -21,12 +22,21 @@ from transformers import BitsAndBytesConfig
 from peft import PeftModel
 from peft import PeftConfig
 
+from torch.multiprocessing import Process, set_start_method
 
-def process_evidence_extraction_with_fixfactuality(dp):
-    PROMPT_STR = "For the given document and claim sentence, find all document sentences providing evidence for claim, and then revise the claim to remove or replace unsupported facts."
+from openai_scripts.predict import OpenaiPredictor
+
+
+def process_evidence_extraction_with_fixfactuality_prependsumm(dp):
+    PROMPT_STR = "You are provided a document and its summary. The summary may potentially contain factual errors. The last sentence of the summary is marked as a claim. Find all sentences in the document providing evidence for the claim, and then revise the claim to remove or replace unsupported facts."
     input_string = f"{PROMPT_STR} DOCUMENT:"
     for _i,sent in enumerate(dp["input_lines"]):
         input_string = f"{input_string} SENT{_i} {sent}"
+
+    input_string = f"{input_string} SUMMARY:"
+    for _k, sent in enumerate(dp["prev_summ_lines"]):
+        input_string = f"{input_string} {sent}"
+
     input_string = f"{input_string} CLAIM: {dp['before_summary_sent']}"
 
     output_string = f"EVIDENCE:"
@@ -38,6 +48,7 @@ def process_evidence_extraction_with_fixfactuality(dp):
     dp["output_string"] = output_string
 
     return dp
+
 
 
 
@@ -57,6 +68,9 @@ def predict_generation(dp, model: AutoModelForSeq2SeqLM, tokenizer, nbeams, max_
     gen_tokids = gen_tokids[1:] # first token is pad
     if gen_tokids[-1].item()==tokenizer.eos_token_id:
         gen_tokids = gen_tokids[:-1]
+
+    if "before_summary_sent" in dp.keys():
+        print("INPUT was:", dp["before_summary_sent"])
 
     gen_string = tokenizer.decode(gen_tokids)
     print("FC generated: ", gen_string)
@@ -168,63 +182,111 @@ def showdiff(fr, to):
     }
 
 
+class HFPredictor(object):
+    def __init__(self, gpu_idx, model_name,  max_input_len,  max_decode_len):
 
-def process_root(pidx, gpu_idx, model_name, base_port, max_input_len, max_decode_len):
+        adapter_config = PeftConfig.from_pretrained(model_name)
+        base_model_name_or_path = adapter_config.base_model_name_or_path
 
-    adapter_config = PeftConfig.from_pretrained(model_name)
-    base_model_name_or_path = adapter_config.base_model_name_or_path
+        bnb_config = BitsAndBytesConfig(
+            load_in_4bit=True,
+            bnb_4bit_use_double_quant=True,
+            bnb_4bit_quant_type="nf4",
+            bnb_4bit_compute_dtype=torch.bfloat16
+        )
 
-    bnb_config = BitsAndBytesConfig(
-        load_in_4bit=True,
-        bnb_4bit_use_double_quant=True,
-        bnb_4bit_quant_type="nf4",
-        bnb_4bit_compute_dtype=torch.bfloat16
-    )
+        tokenizer = AutoTokenizer.from_pretrained(
+            base_model_name_or_path,
+            use_fast=False,
+            trust_remote_code=True
+        )
 
-    tokenizer = AutoTokenizer.from_pretrained(
-        base_model_name_or_path,
-        use_fast=False,
-        trust_remote_code=True
-    )
+        if tokenizer.pad_token==None:
+            tokenizer.pad_token = tokenizer.eos_token
 
-    if tokenizer.pad_token==None:
-        tokenizer.pad_token = tokenizer.eos_token
+        model = AutoModelForSeq2SeqLM.from_pretrained(
+            base_model_name_or_path,
+            trust_remote_code=True,
+            quantization_config=bnb_config,
+            device_map={'':gpu_idx}
+        )
+        # good for making generation fast
+        model.config.use_cache=True
 
-    model = AutoModelForSeq2SeqLM.from_pretrained(
-        base_model_name_or_path,
-        trust_remote_code=True,
-        quantization_config=bnb_config,
-        device_map={'':gpu_idx}
-    )
-    # good for making generation fast
-    model.config.use_cache=True
+        mdl2 = PeftModel.from_pretrained(model,
+                                         model_name,
+                                         torch_dtype=torch.bfloat16,
+                                         device_map={'':gpu_idx})
 
-    mdl2 = PeftModel.from_pretrained(model,
-                                     model_name,
-                                     torch_dtype=torch.bfloat16,
-                                     device_map={'':gpu_idx})
+        model.gradient_checkpointing_disable()
+        mdl2.gradient_checkpointing_disable()
 
-    model.gradient_checkpointing_disable()
-    mdl2.gradient_checkpointing_disable()
+        # test run
+        predict_generation({"input_string":"The capital of Pennsylvania is"}, mdl2, tokenizer, 1, 9999, 5)
 
-    # test run
-    predict_generation({"input_string":"The capital of Pennsylvania is"}, mdl2, tokenizer, 1, 9999, 5)
+        self.mdl2 = mdl2
+        self.tokenizer = tokenizer
+        self.max_input_len = max_input_len
+        self.max_decode_len = max_decode_len
 
 
-    def get_evidence_extraction_with_fixfactuality(input_dict):
-        newdp = process_evidence_extraction_with_fixfactuality(input_dict)
-        predict_generation(newdp, model=mdl2, tokenizer=tokenizer, nbeams=4, max_input_len=max_input_len, max_decode_len=max_decode_len)
+    def get_evidence_extraction_with_fixfactuality(self, input_dict):
+        newdp = process_evidence_extraction_with_fixfactuality_prependsumm(input_dict)
+        predict_generation(newdp, model=self.mdl2, tokenizer=self.tokenizer, nbeams=4, max_input_len=self.max_input_len, max_decode_len=self.max_decode_len)
         return newdp
 
 
-    def predict_fix(article_lines, summary_line):
+
+class OAIPredictor(object):
+    def __init__(self, model_name):
+        self.api_caller = OpenaiPredictor(model_name=model_name)
+        # use 4 or 8 shots depending on context length
+        if model_name=="gpt-3.5-turbo-16k-0613":
+            prefix_msgpath = "/home/kundank/dataset_root/factual_editor/for_common_inference/all_0.03_0.03/for_gpts/gpt-3.5-turbo-16k-0613/evidence_extraction_with_fixfactuality_prependsumm_nofulldelete_maxinplen_3000_maxoutlen_100/test.jsonl"
+        elif model_name=="gpt-4-0613":
+            prefix_msgpath = "/home/kundank/dataset_root/factual_editor/for_common_inference/all_0.03_0.03/for_gpts/gpt-4-0613/evidence_extraction_with_fixfactuality_prependsumm_nofulldelete_maxinplen_3000_maxoutlen_100/test.jsonl"
+        else:
+            raise NotImplementedError
+        self.prefix_messages = list(jsonlines.open(prefix_msgpath))[0]["input_messages"][:-1]
+
+
+    def get_evidence_extraction_with_fixfactuality(self, input_dict):
+        newdp = process_evidence_extraction_with_fixfactuality_prependsumm(input_dict)
+        inpsplit = newdp["input_string"].split("DOCUMENT: ")
+        assert len(inpsplit)==2
+        inp = f"DOCUMENT: {inpsplit[1]}"
+        final_dp = {
+            "input_messages" : deepcopy(self.prefix_messages) + [{"role":"user", "content": inp}],
+            "max_decode_len": None
+        }
+        self.api_caller.predict(final_dp)
+
+        if "prediction" not in final_dp:
+            # failed
+            pdb.set_trace()
+
+        return final_dp
+
+
+
+def process_root(pidx, gpu_idx, model_name, port_val, max_input_len, max_decode_len):
+
+    if "openai:" in model_name:
+        oai_model_name = model_name.split("openai:")[-1]
+        process_predictor = OAIPredictor(model_name=oai_model_name)
+        pass
+    else:
+        process_predictor = HFPredictor(gpu_idx=gpu_idx, model_name=model_name, max_input_len=max_input_len, max_decode_len=max_decode_len)
+
+    def predict_fix(article_lines, summary_line, prev_summ_lines):
 
         num_frontspaces = len(summary_line)-len(summary_line.lstrip())
         summary_line = summary_line.strip()
 
 
-        ev_fixfactuality_output = get_evidence_extraction_with_fixfactuality({
+        ev_fixfactuality_output = process_predictor.get_evidence_extraction_with_fixfactuality({
               'input_lines': article_lines,
+              'prev_summ_lines': prev_summ_lines,
               'before_summary_sent': summary_line,
               'after_summary_sent': "dummmy",
               'id': 'xxxxx',
@@ -233,8 +295,13 @@ def process_root(pidx, gpu_idx, model_name, base_port, max_input_len, max_decode
 
         output = ev_fixfactuality_output["prediction"]
 
-        fixed_output = output.split("REVISION:")[1].strip()
-        ev_sentids = output.split("REVISION:")[0].split("EVIDENCE: ")[1].strip()
+        try:
+            fixed_output = output.split("REVISION:")[1].strip()
+            ev_sentids = output.split("REVISION:")[0].split("EVIDENCE: ")[1].strip()
+        except IndexError:
+            # if the output isnt formatted properly (usually rare), then fall back by not suggesting any edits or evidence
+            fixed_output = summary_line
+            ev_sentids = ""
 
         # print("BEFORE:", summary_line)
         # print("AFTER:", fixed_output)
@@ -317,27 +384,6 @@ def process_root(pidx, gpu_idx, model_name, base_port, max_input_len, max_decode
                 "replacement_strings": fused_replacement_strings}
 
 
-    def check_length(input_lines, tokenizer):
-
-        dummy_dp = {
-              'input_lines': input_lines,
-              'before_summary_sent': "dummy",
-              'after_summary_sent': "dummmy",
-              'id': 'xxxxx',
-              'evidence_labels': [0]
-            }
-
-        newdp = process_evidence_extraction_with_fixfactuality(dummy_dp)
-        inputs = tokenizer(newdp["input_string"], return_tensors="np", truncation=False)
-        inp_shape = inputs["input_ids"].shape
-        input_length = inp_shape[-1]
-
-        curr_len = input_length
-        allowed_len = max_input_len-max_decode_len
-        to_return = {"curr_len":curr_len, "allowed_len":allowed_len, "okay": curr_len<=allowed_len}
-
-        return to_return
-
     app = Bottle()
 
 
@@ -371,9 +417,14 @@ def process_root(pidx, gpu_idx, model_name, base_port, max_input_len, max_decode
 
 
         article_lines = dp["document"].strip().split("\n")
-        gen_summary = dp["summary"].strip()
 
-        summary_lines = nltk.sent_tokenize(gen_summary)
+        if type(dp["summary"])==list:
+            summary_lines=dp["summary"]
+        elif type(dp["summary"])==str:
+            gen_summary = dp["summary"].strip()
+            summary_lines = nltk.sent_tokenize(gen_summary)
+        else:
+            raise NotImplementedError
 
         # length_data = check_length(input_lines=article_lines, tokenizer=tokenizer)
         #
@@ -386,39 +437,38 @@ def process_root(pidx, gpu_idx, model_name, base_port, max_input_len, max_decode
         dp["summary_lines"] = summary_lines
         dp["factcheck_predictions"] = []
 
-        try:
-            for summary_line in summary_lines:
-                result = predict_fix(article_lines, summary_line)
-                dp["factcheck_predictions"].append(result)
+        # try:
+        for k,summary_line in enumerate(summary_lines):
+            result = predict_fix(article_lines, summary_line, summary_lines[:k]) # last argument is previous summary lines
+            dp["factcheck_predictions"].append(result)
 
-        except:
-            return {"result":None, "success":False, "reason":"likely OOM error"}
+        # except:
+        #     return {"result":None, "success":False, "reason":"likely OOM error"}
 
         return {"result":dp, "success":True, "reason":""}
 
 
-    run(app, host="localhost", port=base_port+pidx, debug=True)
+    run(app, host="localhost", port=port_val, debug=True)
 
 
 
 if __name__=="__main__":
 
     parser = argparse.ArgumentParser()
-    parser.add_argument("--input-file", type=str, required=True)
-    parser.add_argument("--output-fpath", type=str, required=True)
     parser.add_argument("--num-processes", type=int, default=1)
     parser.add_argument("--base-port", type=int, default=9000)
+    parser.add_argument("--model-name", type=str, required=True)
+
+    set_start_method("spawn")
 
     args = parser.parse_args()
-    input_file=args.input_file
-    output_fpath=args.output_fpath
     N_PROCS = args.num_processes
     base_port = args.base_port
-
+    model_name = args.model_name
 
     jobs = []
     for i in range(N_PROCS):
-      job = multiprocessing.Process(target=process_root, args=(i,i, N_PROCS, input_file, output_fpath, base_port))
+      job = Process(target=process_root, args=(i,i, model_name, base_port, 9999999, 9999999))
       jobs.append(job)
       job.start()
     for job in jobs:

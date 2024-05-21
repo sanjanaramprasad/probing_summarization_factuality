@@ -7,6 +7,12 @@ from nltk.tokenize import word_tokenize
 from nltk.stem import WordNetLemmatizer
 from sklearn.feature_extraction.text import TfidfVectorizer
 from transformers import AutoTokenizer, AutoModelForCausalLM
+from uuid import uuid4
+
+
+
+
+
 
 with open('/home/ramprasad.sa/secrets/byron_openai.json', 'r') as fp:
     secrets = json.load(fp)
@@ -44,6 +50,10 @@ def read_jsonl(filepath):
             data.append(json.loads(line))
     return data
 
+
+def generate_random_id():
+    rand_token = uuid4()
+    return rand_token
 
 def longest_common_substring_ignore_punctuations(str1, str2):
     # Remove punctuations from strings

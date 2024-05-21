@@ -5,12 +5,17 @@ from scripts.utils import get_chatgpt_response, extract_nonfact_spans, load_mode
 from tqdm import tqdm
 import argparse
 from transformers import logging as hf_logging
+import tiktoken
 hf_logging.set_verbosity_error()
 
 
 
 
 
+
+enc = tiktoken.get_encoding("cl100k_base")
+assert enc.decode(enc.encode("hello world")) == "hello world"
+enc = tiktoken.encoding_for_model("gpt-3.5")
 
 
 def generate_summary(document, 
@@ -39,13 +44,16 @@ def evaluate_inconsistent_sentences(document,
     eval_prompt = eval_prompt_template.format(instruction = instruction,
                                          doc = document,
                                          summ = summary)
-    
+    token_length = enc.encode(eval_prompt)
+    if len(token_length) > 8000:
+        return None
     response = get_chatgpt_response(eval_prompt)
-    inconsistent_sentences = extract_nonfact_spans(response)
+    inconsistent_sentences = extract_nonfact_spans(response, summary)
     return inconsistent_sentences
     
     
 def evaluate_inconsistent_spans(document,
+                                summary,
                                 inconsistent_sentences):
     
     minimaspan_instr = 'List all the minimal inconsistent spans in the following sentence. A minimal inconsistent span is the smallest text span that needs to be modified to make the sentence consistent with the content'
@@ -59,7 +67,7 @@ def evaluate_inconsistent_spans(document,
         # print(minimspan_prompt)
         minimal_spans = get_chatgpt_response(minimspan_prompt)
         
-        minimal_spans = extract_nonfact_spans(minimal_spans)
+        minimal_spans = extract_nonfact_spans(minimal_spans, summary)
         inconsistent_spans += minimal_spans
     return inconsistent_spans
 
@@ -108,10 +116,12 @@ def make_annotated_data(args):
     
     df_write = {'document' : [],
                 'summary': [],
+                'model': [],
+                'origin': [],
                 'nonfactual_spans': []}
 
     tokenizer, model = load_model(args.model)
-    
+    # df_data = df_data[:10]
     for idx, row in tqdm(df_data.iterrows(), total=df_data.shape[0]):
         summary = generate_summary(document = row[document_key], 
                                    model = model,
@@ -120,12 +130,16 @@ def make_annotated_data(args):
         inconsistent_sentences = evaluate_inconsistent_sentences(
                                         document = row[document_key],
                                        summary = summary)
-        inconsistent_spans = evaluate_inconsistent_spans(row[document_key],
-                                inconsistent_sentences)
-        df_write['document'] += [row[document_key]]
-        df_write['summary'] += [summary]
-        df_write['nonfactual_spans'] += ['<sep>'.join(inconsistent_spans)]
-    
+        if inconsistent_sentences != None:
+            inconsistent_spans = evaluate_inconsistent_spans(row[document_key],
+                                    summary,
+                                    inconsistent_sentences)
+            df_write['document'] += [row[document_key]]
+            df_write['summary'] += [summary]
+            df_write['model'] += [args.model]
+            df_write['origin'] += [args.origin]
+            df_write['nonfactual_spans'] += ['<sep>'.join(inconsistent_spans)]
+        
     df_write = pd.DataFrame(df_write)
     # write_dir = '/scratch/ramprasad.sa/summarization_probe/probe_datasets/XSUM_GPT'
     write_path = f'{args.write_dir}/{args.write_file}.csv'
@@ -146,17 +160,21 @@ if __name__ == '__main__':
                            "--model",
                           default = 'mistral7b')
     
+    argParser.add_argument("-origin", 
+                           "--origin",
+                          default = 'XSUM')
+    
     argParser.add_argument("-document_key", 
                            "--document_key",
                           default = 'document')
     
     argParser.add_argument("-write_dir", 
                            "--write_dir",
-                          default = '/scratch/ramprasad.sa/summarization_probe/probe_datasets')
+                          default = '/home/ramprasad.sa/probing_summarization_factuality/datasets')
     
     argParser.add_argument("-write_file", 
                            "--write_file",
-                          default = 'XSUM_GPT_dummy')
+                          default = 'XSUM_mistral_GPT_annotated')
     args = argParser.parse_args()
     make_annotated_data(args)
 

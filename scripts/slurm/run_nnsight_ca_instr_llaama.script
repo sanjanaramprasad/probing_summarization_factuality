@@ -1,0 +1,12 @@
+#!/bin/bash
+#SBATCH --nodes=1
+#SBATCH --time=96:00:00
+#SBATCH --job-name=nnsight_ca_instr_llama7b
+#SBATCH --partition=177huntington
+#SBATCH --mem=100G
+#SBATCH --gres=gpu:1
+#SBATCH -o logs_nnsight_ca_instr_llama7b
+
+source activate nnsight 
+cd /home/ramprasad.sa/probing_summarization_factuality/scripts/models
+python nnsight_activation_patch.py --model llama7b --origin XSUM

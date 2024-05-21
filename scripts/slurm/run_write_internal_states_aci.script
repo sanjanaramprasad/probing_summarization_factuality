@@ -1,0 +1,12 @@
+#!/bin/bash
+#SBATCH --nodes=1
+#SBATCH --time=48:00:00
+#SBATCH --job-name=aci_falcon_states
+#SBATCH --partition=177huntington
+#SBATCH --mem=100G
+#SBATCH --gres=gpu:1
+#SBATCH -o logs_aci_falcon_states
+
+source activate probe 
+cd /home/ramprasad.sa/probing_summarization_factuality/scripts/dataset_creators/
+python write_summary_model_internal_state.py --model falcon7b --origin ACIBENCH

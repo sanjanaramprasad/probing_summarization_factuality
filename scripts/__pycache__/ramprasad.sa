@@ -1,0 +1,11 @@
+#!/bin/bash
+#SBATCH --nodes=1
+#SBATCH --time=12:00:00
+#SBATCH --job-name=fal_prob_scoring
+#SBATCH --partition=177huntington
+# SBATCH --mem=100G
+# SBATCH --gres=gpu:1
+
+
+conda activte probe 
+python run_prob_scoring.py --model_name falcon7b --origin ACIBENCH

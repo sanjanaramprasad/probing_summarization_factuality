@@ -1,0 +1,12 @@
+#!/bin/bash
+#SBATCH --nodes=1
+#SBATCH --time=48:00:00
+#SBATCH --job-name=acibench_mistral_prob_scores
+#SBATCH --partition=177huntington
+#SBATCH --mem=100G
+#SBATCH --gres=gpu:1
+#SBATCH -o logs_acibench_mistral_prob_scores
+
+source activate probe 
+cd /home/ramprasad.sa/probing_summarization_factuality/scripts/models/
+python run_prob_scoring.py --model mistral7b --origin ACIBENCH

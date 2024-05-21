@@ -1,0 +1,12 @@
+#!/bin/bash
+#SBATCH --nodes=1
+#SBATCH --time=48:00:00
+#SBATCH --job-name=acibench_falcon_layerwise_prob
+#SBATCH --partition=177huntington
+#SBATCH --mem=100G
+#SBATCH --gres=gpu:1
+#SBATCH -o logs_acibench_falcon_layerwise_prob
+
+source activate probe 
+cd /home/ramprasad.sa/probing_summarization_factuality/scripts/dataset_creators/
+python make_layerwise_prob.py --model falcon7b --origin ACIBENCH

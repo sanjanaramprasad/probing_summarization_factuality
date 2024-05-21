@@ -5,6 +5,12 @@ import pandas as pd
 from tqdm import tqdm
 from scripts.utils import read_jsonl
 import argparse
+import nltk
+from nltk.corpus import stopwords
+
+nltk.download('stopwords')
+# Get the English stopwords list from NLTK
+stop_words = set(stopwords.words('english'))
 
 def postprocess(txt):
     txt = [w.strip(string.punctuation) for w in txt.split(' ')]
@@ -21,20 +27,26 @@ def find_edited_spans(s1, s2):
 
     edited_spans = []
     current_span = ""
-
     for item in diff:
         code, word = item[0], item[2:]
         
         if code == ' ':
             if current_span:
-                edited_spans.append(current_span.strip())
+                # print(current_span)
+                # if not len([w for w in current_span.split() if w not in stop_words]):
+                #     print(current_span)
+                    # printed = True
+                if len([w for w in current_span.split() if w not in stop_words]):
+                    edited_spans.append(current_span.strip())
                 current_span = ""
         elif code == '-':
             current_span += word + " "
 
+    
     if current_span:
-        edited_spans.append(current_span.strip())
-
+        if len([w for w in current_span.split() if w not in stop_words]):
+            edited_spans.append(current_span.strip())
+    
     return edited_spans
 
 
@@ -112,10 +124,10 @@ def make_data_usb(args):
 if __name__ == '__main__':
     argParser = argparse.ArgumentParser()
     argParser.add_argument("-read_path", "--read_path",      
-                           default="/home/ramprasad.sa/probing_summarization_factuality/datasets/annotations/usb_annot_batch1.jsonl")
+                           default="/home/ramprasad.sa/probing_summarization_factuality/datasets/annotations/genaudit_data_final_2feb.jsonl")
     
     argParser.add_argument("-write_path", "--write_path",
-                           default="/home/ramprasad.sa/probing_summarization_factuality/datasets/USB_annotations.csv")
+                           default="/home/ramprasad.sa/probing_summarization_factuality/datasets/Genaudit_annotations.csv")
     args = argParser.parse_args()
     make_data_usb(args)
     

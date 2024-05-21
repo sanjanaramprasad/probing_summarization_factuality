@@ -1,0 +1,12 @@
+#!/bin/bash
+#SBATCH --nodes=1
+#SBATCH --time=96:00:00
+#SBATCH --job-name=gpt_xsum_mistrala
+#SBATCH --partition=177huntington
+#SBATCH --mem=100G
+#SBATCH --gres=gpu:1
+#SBATCH -o logs_write_summary_model_internal_state
+
+source activate probe 
+cd /home/ramprasad.sa/probing_summarization_factuality/scripts/dataset_creators/
+python write_summary_model_internal_state.py --read_path /home/ramprasad.sa/probing_summarization_factuality/datasets/XSUM_mistral_GPT_annotated.csv --write_path /scratch/ramprasad.sa/probing_summarization_factuality/internal_states/GPT_annotated --prompt_template_path /home/ramprasad.sa/probing_summarization_factuality/datasets/prompt_templates/ --prompt_type document_context_gpt --source_key document --nonfactual_span_key nonfactual_spans

@@ -115,7 +115,7 @@ if __name__ == '__main__':
                            default="/home/ramprasad.sa/probing_summarization_factuality/datasets/annotations/usb_annot_batch1.jsonl")
     
     argParser.add_argument("-write_path", "--write_path",
-                           default="/home/ramprasad.sa/probing_summarization_factuality/datasets/USB_annotations.csv")
+                           default="/home/ramprasad.sa/probing_summarization_factuality/datasets/USB_annotations_latest.csv")
     args = argParser.parse_args()
     make_data_usb(args)
     

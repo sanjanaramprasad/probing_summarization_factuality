@@ -1,0 +1,5 @@
+{
+"instruction": "The following keywords describe a topic, complete the document relevant to the topic",
+"prompt_template": "The following keywords describe a topic, complete the document based on the topic\nKeywords: {keywords}\nDocument:"
+
+}

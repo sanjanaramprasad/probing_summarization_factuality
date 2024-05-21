@@ -1,0 +1,6 @@
+{
+    "instruction": "Generate a summary for the following document in brief.",
+    "prompt_prefix_template": "Generate a summary for the following document in brief.\nDocument:",
+    "prompt_suffix_template": "\nSummary:"   
+    
+    }

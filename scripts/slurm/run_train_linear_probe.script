@@ -1,0 +1,12 @@
+#!/bin/bash
+#SBATCH --nodes=1
+#SBATCH --time=48:00:00
+#SBATCH --job-name=linear_probe_gptann_mistral_xsum
+#SBATCH --partition=177huntington
+#SBATCH --mem=100G
+#SBATCH --gres=gpu:1
+#SBATCH -o logs_linear_probe_gptann_mistral_xsum
+
+source activate probe 
+cd /home/ramprasad.sa/probing_summarization_factuality/scripts/models/
+python train_linear_probe.py --model mistral7b --dataset XSUM --annotator GPT_annotated 

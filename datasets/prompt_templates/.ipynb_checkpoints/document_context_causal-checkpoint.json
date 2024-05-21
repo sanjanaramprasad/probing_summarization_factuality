@@ -1,0 +1,6 @@
+{
+"instruction": "Generate a summary for the following document in brief. When creating the summary, only use information that is present in the document",
+"prompt_prefix_template": " CONTENT: ",
+"prompt_suffix_template": " SUMMARY: "   
+
+}
